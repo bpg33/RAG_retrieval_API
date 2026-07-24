@@ -7,6 +7,10 @@
   (also committed at [`docs/openapi.json`](openapi.json))
 - Auth: set `LOCAL_API_KEY`, then send `X-API-Key: <key>` on `/api/v1/*`
 - Every response includes an `X-Request-ID` header
+- Request bodies larger than `MAX_REQUEST_BYTES` (default 64 KiB) are rejected
+  with `413`
+- CORS is disabled by default; set `CORS_ALLOW_ORIGINS` (comma-separated) to
+  allow a local browser chat app to call the API
 
 ## Errors
 

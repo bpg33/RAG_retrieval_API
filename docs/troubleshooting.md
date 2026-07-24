@@ -24,6 +24,9 @@ cause. Common ones:
   reader account. Test with `psql` using the reader credentials.
 - **From Docker**, `localhost` means the container. Use the Synology's LAN address
   and, if needed, an `extra_hosts` entry.
+- **One of several collections is down:** by default the search fails. Set
+  `PARTIAL_RESULTS_ON_COLLECTION_ERROR=true` to return results from the reachable
+  collections with a warning instead (it still fails if *all* are unavailable).
 
 ## Embedding mismatch
 

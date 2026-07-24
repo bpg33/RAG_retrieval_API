@@ -8,12 +8,16 @@ from time import perf_counter
 
 import structlog
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from ulid import ULID
 
 from synology_rag.api.errors import register_exception_handlers
 from synology_rag.api.routes_documents import router as documents_router
 from synology_rag.api.routes_health import router as health_router
 from synology_rag.api.routes_search import router as search_router
+from synology_rag.api.schemas import ErrorBody, ErrorResponseModel
+from synology_rag.config import Settings
 from synology_rag.container import AppContainer, build_container
 from synology_rag.observability.logging import configure_logging, get_logger
 from synology_rag.observability.metrics import metrics
@@ -28,6 +32,12 @@ delete, indexing, SQL, or filesystem operations.
 
 
 def create_app(container: AppContainer | None = None) -> FastAPI:
+    # Settings are needed at construction time for CORS and the body-size limit.
+    # In production (uvicorn factory, no container) this loads from the
+    # environment and fails closed on invalid configuration, same as the engine.
+    settings = container.settings if container is not None else Settings()
+    max_request_bytes = settings.max_request_bytes
+
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         active = container or build_container()
@@ -50,11 +60,26 @@ def create_app(container: AppContainer | None = None) -> FastAPI:
         openapi_url="/openapi.json",
     )
 
+    if settings.cors_origins:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=settings.cors_origins,
+            allow_methods=["GET", "POST", "OPTIONS"],
+            allow_headers=["Content-Type", "X-API-Key", "X-Request-ID", "X-Client-Id"],
+            allow_credentials=False,
+        )
+
     @app.middleware("http")
     async def add_request_context(request: Request, call_next):  # type: ignore[no-untyped-def]
         request_id = request.headers.get("X-Request-ID") or str(ULID())
         request.state.request_id = request_id
         structlog.contextvars.bind_contextvars(request_id=request_id)
+
+        oversized = _reject_if_oversized(request, request_id, max_request_bytes)
+        if oversized is not None:
+            structlog.contextvars.clear_contextvars()
+            return oversized
+
         start = perf_counter()
         try:
             response = await call_next(request)
@@ -76,6 +101,33 @@ def create_app(container: AppContainer | None = None) -> FastAPI:
         return metrics.snapshot()
 
     return app
+
+
+def _reject_if_oversized(
+    request: Request, request_id: str, max_bytes: int
+) -> JSONResponse | None:
+    """Return a 413 response if the declared body exceeds the configured limit."""
+    content_length = request.headers.get("content-length")
+    if content_length is None:
+        return None
+    try:
+        declared = int(content_length)
+    except ValueError:
+        return None
+    if declared <= max_bytes:
+        return None
+    metrics.increment("errors_total")
+    body = ErrorResponseModel(
+        error=ErrorBody(
+            code="invalid_request",
+            message=f"Request body exceeds the maximum of {max_bytes} bytes.",
+            retryable=False,
+            request_id=request_id,
+        )
+    )
+    return JSONResponse(
+        status_code=413, content=body.model_dump(), headers={"X-Request-ID": request_id}
+    )
 
 
 def _log_security_posture(container: AppContainer) -> None:

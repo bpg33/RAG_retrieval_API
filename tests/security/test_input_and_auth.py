@@ -62,6 +62,48 @@ def test_redaction_processor_masks_secrets() -> None:
     assert redacted["query_len"] == 42
 
 
+def test_oversized_body_rejected_with_413(vector_repo, embedder) -> None:
+    from fastapi.testclient import TestClient
+
+    from synology_rag.api.app import create_app
+    from tests.conftest import build_test_container
+
+    settings = make_settings(max_request_bytes=200)
+    container = build_test_container(settings, vector_repo, embedder)
+    with TestClient(create_app(container=container)) as test_client:
+        resp = test_client.post("/api/v1/search", json={"query": "x" * 500})
+        assert resp.status_code == 413
+        assert resp.json()["error"]["code"] == "invalid_request"
+
+
+def test_cors_headers_present_when_configured(vector_repo, embedder) -> None:
+    from fastapi.testclient import TestClient
+
+    from synology_rag.api.app import create_app
+    from tests.conftest import build_test_container
+
+    settings = make_settings(cors_allow_origins="http://localhost:3000")
+    container = build_test_container(settings, vector_repo, embedder)
+    with TestClient(create_app(container=container)) as test_client:
+        resp = test_client.options(
+            "/api/v1/search",
+            headers={
+                "Origin": "http://localhost:3000",
+                "Access-Control-Request-Method": "POST",
+            },
+        )
+        assert resp.status_code == 200
+        assert resp.headers["access-control-allow-origin"] == "http://localhost:3000"
+
+
+def test_no_cors_headers_when_disabled(client) -> None:
+    resp = client.options(
+        "/api/v1/search",
+        headers={"Origin": "http://evil.test", "Access-Control-Request-Method": "POST"},
+    )
+    assert "access-control-allow-origin" not in resp.headers
+
+
 def test_auth_required_when_key_set(vector_repo, embedder) -> None:
     from fastapi.testclient import TestClient
 

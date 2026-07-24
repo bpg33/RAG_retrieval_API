@@ -18,6 +18,7 @@ from synology_rag.domain.errors import (
     ChunkNotFoundError,
     ConfigurationError,
     DocumentNotFoundError,
+    QdrantUnavailableError,
     RetrievalError,
     RetrievalTimeoutError,
 )
@@ -41,7 +42,11 @@ from synology_rag.retrieval.citations import build_citations
 from synology_rag.retrieval.context_budget import apply_context_budget
 from synology_rag.retrieval.deduplication import deduplicate
 from synology_rag.retrieval.embeddings import generate_query_embedding
-from synology_rag.retrieval.filters import build_query_filter, known_filter_names
+from synology_rag.retrieval.filters import (
+    build_query_filter,
+    known_filter_names,
+    unsupported_filter_warnings,
+)
 from synology_rag.retrieval.metadata import (
     _coerce_datetime,
     chunk_from_hit,
@@ -99,21 +104,37 @@ class RetrievalService:
         normalised = normalise_query(validated.query)
         vector = await generate_query_embedding(self._embed, normalised.normalised)
 
+        warnings = list(validated.warnings)
+        searched_mappings = [self._mapping.for_collection(c) for c in validated.collections]
+        warnings.extend(unsupported_filter_warnings(validated, searched_mappings))
+
         candidate_limit = self._candidate_limit(validated.limit)
         candidates: list[Candidate] = []
+        failed: list[str] = []
         for collection in validated.collections:
             coll = self._mapping.for_collection(collection)
-            hits = await self._vectors.search(
-                collection=collection,
-                vector=vector,
-                vector_name=coll.vector_name,
-                limit=candidate_limit,
-                query_filter=build_query_filter(validated, coll),
-                score_threshold=validated.minimum_score,
-            )
+            try:
+                hits = await self._vectors.search(
+                    collection=collection,
+                    vector=vector,
+                    vector_name=coll.vector_name,
+                    limit=candidate_limit,
+                    query_filter=build_query_filter(validated, coll),
+                    score_threshold=validated.minimum_score,
+                )
+            except QdrantUnavailableError:
+                if not self._settings.partial_results_on_collection_error:
+                    raise
+                failed.append(collection)
+                warnings.append(
+                    f"Collection '{collection}' was unavailable and was skipped; "
+                    "results may be incomplete."
+                )
+                continue
             candidates.extend(chunk_from_hit(hit, coll) for hit in hits)
 
-        warnings = list(validated.warnings)
+        if failed and len(failed) == len(validated.collections):
+            raise QdrantUnavailableError("All searched collections are currently unavailable.")
 
         deduped = deduplicate(candidates)
         ranked = rank_primary(deduped)
@@ -165,7 +186,8 @@ class RetrievalService:
         )
 
     def _candidate_limit(self, limit: int) -> int:
-        return max(limit, min(limit * 4, 100))
+        oversampled = limit * self._settings.candidate_multiplier
+        return max(limit, min(oversampled, self._settings.max_candidates))
 
     # -- Document metadata ---------------------------------------------------
     async def get_document_metadata(self, document_id: str) -> DocumentMetadata:
@@ -335,8 +357,10 @@ def _interleave(primaries: list[Candidate], neighbours: list[Candidate]) -> list
         parent_seq = primary.sequence
         before = [k for k in kids if _is_before(k.sequence, parent_seq)]
         after = [k for k in kids if not _is_before(k.sequence, parent_seq)]
-        before.sort(key=lambda c: (c.sequence is None, c.sequence))
-        after.sort(key=lambda c: (c.sequence is None, c.sequence))
+        # Sort by sequence; None-sequence neighbours sort last without comparing
+        # None to None (which would raise TypeError).
+        before.sort(key=_sequence_sort_key)
+        after.sort(key=_sequence_sort_key)
         ordered.extend(c.chunk for c in before)
         ordered.append(primary.chunk)
         ordered.extend(c.chunk for c in after)
@@ -347,3 +371,8 @@ def _is_before(seq: int | None, parent_seq: int | None) -> bool:
     if seq is None or parent_seq is None:
         return False
     return seq < parent_seq
+
+
+def _sequence_sort_key(cand: Candidate) -> tuple[bool, int]:
+    """Order by sequence ascending; unknown sequences last. Never compares None."""
+    return (cand.sequence is None, cand.sequence if cand.sequence is not None else 0)

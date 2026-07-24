@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import re
 from enum import StrEnum
-from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -265,10 +264,23 @@ class Settings(BaseSettings):
     max_total_chunks: int = 20
     max_returned_characters: int = 40000
     max_characters_per_chunk: int = 0
+    # Candidate oversampling for dense search (headroom for dedup/threshold).
+    candidate_multiplier: int = 4
+    max_candidates: int = 100
 
     # Reliability
     search_timeout_seconds: float = 10.0
     max_retries: int = 2
+    # When multiple collections are searched and one is unavailable: if true,
+    # return partial results with a warning; if false (default), fail the search.
+    partial_results_on_collection_error: bool = False
+
+    # HTTP hardening
+    # Maximum accepted request body size in bytes (413 above this).
+    max_request_bytes: int = 65536
+    # Comma-separated allowed CORS origins for a local browser chat app.
+    # Empty disables CORS entirely (the default; server-to-server needs none).
+    cors_allow_origins: str = ""
 
     # Schema mapping
     schema_mapping_file: str = "config/schema_mapping.yaml"
@@ -283,6 +295,10 @@ class Settings(BaseSettings):
     def bind_is_local(self) -> bool:
         return self.bind_host in _LOCAL_HOSTS
 
+    @property
+    def cors_origins(self) -> list[str]:
+        return [o.strip() for o in self.cors_allow_origins.split(",") if o.strip()]
+
     @field_validator("embedding_dimensions")
     @classmethod
     def _positive_dimensions(cls, v: int | None) -> int | None:
@@ -290,7 +306,14 @@ class Settings(BaseSettings):
             raise ValueError("EMBEDDING_DIMENSIONS must be a positive integer")
         return v
 
-    @field_validator("max_search_limit", "default_search_limit", "max_total_chunks")
+    @field_validator(
+        "max_search_limit",
+        "default_search_limit",
+        "max_total_chunks",
+        "candidate_multiplier",
+        "max_candidates",
+        "max_request_bytes",
+    )
     @classmethod
     def _positive(cls, v: int) -> int:
         if v <= 0:
@@ -344,9 +367,3 @@ def load_schema_mapping(settings: Settings) -> SchemaMapping:
                     f"{coll.metadata_source.value}) but POSTGRES_ENABLED=false"
                 )
     return mapping
-
-
-@lru_cache(maxsize=1)
-def get_settings() -> Settings:
-    """Cached settings accessor for adapters that need a process-wide instance."""
-    return Settings()

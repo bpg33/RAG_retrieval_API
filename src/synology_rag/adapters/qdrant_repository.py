@@ -28,7 +28,22 @@ from synology_rag.domain.ports import (
     VectorHit,
 )
 
-_TRANSIENT = (UnexpectedResponse, ResponseHandlingException, OSError, ConnectionError, TimeoutError)
+_TRANSIENT: tuple[type[Exception], ...] = (
+    UnexpectedResponse,
+    ResponseHandlingException,
+    OSError,
+    ConnectionError,
+    TimeoutError,
+)
+
+# When prefer_grpc=true, transport failures surface as grpc.RpcError. Include it
+# so they map to a retryable QdrantUnavailableError rather than a generic 500.
+try:  # pragma: no cover - depends on optional grpc extra
+    from grpc import RpcError as _GrpcRpcError  # type: ignore[import-untyped]
+
+    _TRANSIENT = (*_TRANSIENT, _GrpcRpcError)
+except ImportError:  # pragma: no cover
+    pass
 
 
 def _coerce_point_id(value: str) -> int | str:

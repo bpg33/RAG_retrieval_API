@@ -4,8 +4,12 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from synology_rag.config import Settings, load_schema_mapping
-from synology_rag.retrieval.filters import build_query_filter, known_filter_names
+from synology_rag.config import CollectionMapping, PayloadMapping, Settings, load_schema_mapping
+from synology_rag.retrieval.filters import (
+    build_query_filter,
+    known_filter_names,
+    unsupported_filter_warnings,
+)
 from synology_rag.retrieval.validation import ValidatedRequest
 from tests.conftest import make_settings
 
@@ -78,3 +82,41 @@ def test_empty_filter_is_empty() -> None:
     coll = _mapping(settings).for_collection("documents")
     qf = build_query_filter(_validated(), coll)
     assert qf.is_empty()
+
+
+def test_shortcut_and_metadata_filter_do_not_duplicate_conditions() -> None:
+    settings = make_settings()
+    coll = _mapping(settings).for_collection("documents")
+    qf = build_query_filter(
+        _validated(file_types=["pdf"], metadata_filters={"file_type": "pdf"}), coll
+    )
+    file_type_conditions = [c for c in qf.must_match if c.key == "file_type"]
+    assert len(file_type_conditions) == 1
+    assert file_type_conditions[0].values == ["pdf"]
+
+
+def test_shortcut_and_metadata_filter_union_values() -> None:
+    settings = make_settings()
+    coll = _mapping(settings).for_collection("documents")
+    qf = build_query_filter(
+        _validated(file_types=["pdf"], metadata_filters={"file_type": "pptx"}), coll
+    )
+    condition = next(c for c in qf.must_match if c.key == "file_type")
+    assert condition.values == ["pdf", "pptx"]
+
+
+def test_unsupported_filter_warns_when_no_collection_matches() -> None:
+    # A collection that exposes no file_type/folder/modified fields.
+    bare = CollectionMapping(payload=PayloadMapping(text="text", document_id="document_id"))
+    warnings = unsupported_filter_warnings(
+        _validated(file_types=["pdf"], folders=["x"]), [bare]
+    )
+    assert any("file_types" in w for w in warnings)
+    assert any("folders" in w for w in warnings)
+
+
+def test_no_warning_when_filter_supported() -> None:
+    settings = make_settings()
+    coll = _mapping(settings).for_collection("documents")
+    warnings = unsupported_filter_warnings(_validated(file_types=["pdf"]), [coll])
+    assert warnings == []

@@ -14,7 +14,8 @@ layers, not a prompt instruction.
 | Secret leakage | Secrets never logged (redaction processor); errors never expose SQL/paths/connection strings; `.env` git-ignored. |
 | Prompt injection in documents | Retrieved text is treated as evidence; tool descriptions/system guidance take precedence; no action tools exist to hijack. |
 | Public exposure | Binds to `127.0.0.1` by default; non-local bind requires explicit acknowledgement; Synology DB ports must not be internet-exposed. |
-| Oversized / malformed input | Query length, limits, neighbours, and payload size are validated and clamped. |
+| Oversized / malformed input | Query length, limits, neighbours are validated/clamped; request bodies over `MAX_REQUEST_BYTES` are rejected with `413`. |
+| Cross-origin browser access | CORS is disabled by default; only origins in `CORS_ALLOW_ORIGINS` are allowed (credentials disabled). |
 
 ## Layered read-only enforcement
 
