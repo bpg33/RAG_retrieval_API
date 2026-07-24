@@ -1,0 +1,36 @@
+# Environment / secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+config/schema_mapping.yaml
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+coverage.xml
+
+# Logs / local data
+*.log
+logs/
+.audit/
+benchmark-results/*.json
+
+# Editor / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

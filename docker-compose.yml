@@ -1,0 +1,31 @@
+# Docker deployment for the REST API.
+#
+# The service reaches Qdrant/PostgreSQL on your Synology over the LAN, so set
+# QDRANT_URL / POSTGRES_HOST in .env to the Synology's address (not "localhost",
+# which inside a container refers to the container itself).
+#
+# The published port is bound to 127.0.0.1 only, so the API is not exposed to the
+# LAN or internet. Because the process listens on 0.0.0.0 *inside* the container,
+# ALLOW_NON_LOCAL_BIND=true is required (the host-side binding is what protects it).
+services:
+  retrieval-api:
+    build: .
+    image: synology-rag-retrieval:local
+    env_file:
+      - .env
+    environment:
+      BIND_HOST: 0.0.0.0
+      BIND_PORT: "8765"
+      ALLOW_NON_LOCAL_BIND: "true"
+      SCHEMA_MAPPING_FILE: /app/config/schema_mapping.yaml
+    ports:
+      # host:container - published to localhost only.
+      - "127.0.0.1:8765:8765"
+    volumes:
+      # Mount your real (git-ignored) schema mapping read-only.
+      - ./config/schema_mapping.yaml:/app/config/schema_mapping.yaml:ro
+    restart: unless-stopped
+    # If your Synology is reachable only via a hostname the container can't
+    # resolve, add it here, e.g.:
+    # extra_hosts:
+    #   - "synology.local:192.168.1.10"
