@@ -56,6 +56,7 @@ from synology_rag.retrieval.neighbours import expand_neighbours
 from synology_rag.retrieval.query_normalisation import normalise_query
 from synology_rag.retrieval.ranking import rank_primary
 from synology_rag.retrieval.validation import validate_search_request
+from synology_rag.retrieval.versions import collapse_versions
 
 IdFactory = Callable[[], str]
 
@@ -148,6 +149,16 @@ class RetrievalService:
             working, self._mapping, self._metadata
         )
         warnings.extend(hydrate_warnings)
+
+        if self._settings.collapse_duplicate_versions:
+            working, collapsed = collapse_versions(
+                working, similarity_threshold=self._settings.duplicate_version_similarity
+            )
+            if collapsed:
+                warnings.append(
+                    f"Collapsed {collapsed} near-duplicate document version(s); "
+                    "showing the most recent of each."
+                )
 
         primaries = working[: validated.limit]
         # Assign primary ranks before neighbour expansion so neighbours inherit.

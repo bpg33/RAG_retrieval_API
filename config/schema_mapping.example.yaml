@@ -112,3 +112,13 @@ collections:
   #       filename: file_name
   #       title: title
   #       modified_at: modified_time
+  #   # Optional: return an openable link to the source document. Reconstructs a
+  #   # path your machine can open from the stored (container/host) path. Example
+  #   # maps a container path "/data/…" to a Windows UNC path on the Synology
+  #   # share; pdf_page_anchor appends "#page=N" for PDFs.
+  #   source_uri:
+  #     from_payload: source_path
+  #     strip_prefix: "/data/"
+  #     add_prefix: "\\\\192.168.1.59\\aiagent-data-source\\"
+  #     separator: "\\"
+  #     pdf_page_anchor: true

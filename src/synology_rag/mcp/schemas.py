@@ -43,6 +43,7 @@ def format_search_response(response: SearchResponse) -> dict[str, Any]:
             "text": chunk.text,
             "source": chunk.filename or chunk.title or chunk.document_id,
             "locator": _chunk_locator(chunk),
+            "source_uri": chunk.source_uri,
             "document_id": chunk.document_id,
             "chunk_id": chunk.chunk_id,
             "score": round(chunk.score, 4),
@@ -57,6 +58,7 @@ def format_search_response(response: SearchResponse) -> dict[str, Any]:
             "citation_id": c.citation_id,
             "display_name": c.display_name,
             "locator": c.locator,
+            "source_uri": c.source_uri,
             "document_id": c.document_id,
         }
         for c in response.citations

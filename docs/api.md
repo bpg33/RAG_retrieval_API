@@ -11,6 +11,13 @@
   with `413`
 - CORS is disabled by default; set `CORS_ALLOW_ORIGINS` (comma-separated) to
   allow a local browser chat app to call the API
+- **Document links:** results and citations include `source_uri` when a
+  collection configures a `source_uri` template (see
+  `config/schema_mapping.example.yaml`) - a client-openable path/URL to the
+  source document, with `#page=N` appended for PDFs. Off unless configured.
+- **Version collapsing:** set `COLLAPSE_DUPLICATE_VERSIONS=true` to collapse
+  near-duplicate versions of the same document (e.g. `deck v2..v6`) across
+  results, keeping the most recent; a warning reports how many were collapsed.
 
 ## Errors
 
