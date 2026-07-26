@@ -1,0 +1,101 @@
+[project]
+name = "synology-rag-retrieval"
+version = "0.1.0"
+description = "Read-only Retrieval-Augmented Generation platform over an existing Synology-hosted Qdrant + PostgreSQL index. Exposes one shared retrieval engine through a local REST API and a local MCP adapter."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Proprietary" }
+authors = [{ name = "Synology RAG Retrieval" }]
+
+# Runtime dependencies. Pinned with lower bounds; a lockfile (uv.lock) provides
+# reproducible installs. See docs/deployment-windows.md.
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "pydantic>=2.7",
+    "pydantic-settings>=2.3",
+    "qdrant-client>=1.9",
+    "psycopg[binary,pool]>=3.1",
+    "mcp>=1.2",
+    "structlog>=24.1",
+    "httpx>=0.27",
+    "pyyaml>=6.0",
+    "python-ulid>=2.2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.2",
+    "pytest-asyncio>=0.23",
+    "pytest-cov>=5.0",
+    "ruff>=0.5",
+    "mypy>=1.10",
+    "types-PyYAML",
+]
+
+[project.scripts]
+synology-rag-api = "synology_rag.api.__main__:main"
+synology-rag-mcp = "synology_rag.mcp.server:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/synology_rag"]
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+addopts = "-ra -q"
+testpaths = ["tests"]
+asyncio_mode = "auto"
+markers = [
+    "integration: tests that require live Qdrant/PostgreSQL/embedding services",
+    "security: read-only and input-validation security tests",
+    "contract: REST/MCP contract equivalence tests",
+    "retrieval_quality: benchmark-based retrieval quality tests",
+]
+filterwarnings = [
+    "ignore:Using `httpx` with `starlette.testclient` is deprecated",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests", "scripts"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "C4", "PTH", "RUF"]
+ignore = [
+    "B008",   # FastAPI Depends() in argument defaults is idiomatic
+    "RUF012", # mutable class attrs; pydantic models handle this
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["B011"]
+
+[tool.mypy]
+# No hard python_version pin: mypy targets the running interpreter's version so
+# each CI matrix leg (3.11, 3.12) is checked against its own runtime, and
+# third-party stubs (e.g. NumPy) parse under the version that installed them.
+mypy_path = "src"
+packages = ["synology_rag"]
+strict = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+disallow_untyped_defs = true
+no_implicit_optional = true
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+# Third-party libraries without complete type stubs.
+module = ["qdrant_client.*", "mcp.*", "ulid.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# NumPy (a transitive dependency of qdrant-client) ships stubs using 3.12-only
+# `type` syntax that break the check under python_version = 3.11; grpc has
+# incomplete stubs. Skip analysing them entirely - we type against neither.
+module = ["numpy.*", "grpc.*"]
+ignore_missing_imports = true
+follow_imports = "skip"

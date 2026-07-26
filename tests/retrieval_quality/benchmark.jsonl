@@ -1,0 +1,6 @@
+{"id": "q1", "query": "poor data quality and scope creep recurring implementation risks", "expected_document_ids": ["doc-1"]}
+{"id": "q2", "query": "recommendations to mitigate asset tagging implementation risks", "expected_document_ids": ["doc-1"]}
+{"id": "q3", "query": "introduction to the asset tagging programme and its objectives", "expected_document_ids": ["doc-1"]}
+{"id": "q4", "query": "quarterly budget figures and headcount for the finance team", "expected_document_ids": ["doc-2"]}
+{"id": "q5", "query": "finance budget headcount quarterly", "expected_document_ids": ["doc-2"]}
+{"id": "q6", "query": "asset tagging programme review implementation risks data quality", "expected_document_ids": ["doc-1"]}
