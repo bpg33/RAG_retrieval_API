@@ -75,7 +75,9 @@ ignore = [
 "tests/**" = ["B011"]
 
 [tool.mypy]
-python_version = "3.11"
+# No hard python_version pin: mypy targets the running interpreter's version so
+# each CI matrix leg (3.11, 3.12) is checked against its own runtime, and
+# third-party stubs (e.g. NumPy) parse under the version that installed them.
 mypy_path = "src"
 packages = ["synology_rag"]
 strict = true
