@@ -51,7 +51,7 @@ def test_postgres_required_but_disabled_raises(tmp_path) -> None:
         "    postgres:\n"
         "      schema: public\n"
         "      table: docs_v\n"
-        "      document_id_column: document_id\n"
+        "      key_column: document_id\n"
         "      columns: {filename: filename}\n"
     )
     settings = make_settings(
@@ -64,7 +64,7 @@ def test_postgres_required_but_disabled_raises(tmp_path) -> None:
 def test_postgres_identifier_validation_rejects_injection() -> None:
     with pytest.raises(ValidationError):
         PostgresCollectionMapping(
-            schema="public", table="docs; DROP TABLE users", document_id_column="id"
+            schema="public", table="docs; DROP TABLE users", key_column="id"
         )
 
 

@@ -131,8 +131,12 @@ class MetadataRepository(Protocol):
     """Read-only PostgreSQL metadata enrichment. SELECT only."""
 
     async def fetch_metadata(
-        self, *, collection: str, document_ids: list[str]
+        self, *, collection: str, keys: list[str]
     ) -> dict[str, dict[str, Any]]:
-        """Return {document_id: {domain_field: value}} for the given documents."""
+        """Return {key: {domain_field: value}} for the given lookup keys.
+
+        ``keys`` are document ids or chunk ids depending on the collection's
+        configured ``lookup_key``.
+        """
 
     async def health(self) -> bool: ...

@@ -7,6 +7,7 @@ import pytest
 
 from synology_rag.adapters.embedding_provider import (
     FakeEmbeddingProvider,
+    OllamaEmbeddingProvider,
     OpenAICompatibleEmbeddingProvider,
 )
 from synology_rag.domain.errors import EmbeddingIncompatibleError, EmbeddingUnavailableError
@@ -81,3 +82,66 @@ async def test_transport_error_is_wrapped() -> None:
     provider = _provider_with(handler)
     with pytest.raises(EmbeddingUnavailableError):
         await provider.embed_query("q")
+
+
+def _ollama_with(handler) -> OllamaEmbeddingProvider:
+    transport = httpx.MockTransport(handler)
+    client = httpx.AsyncClient(transport=transport, base_url="http://mac.test:11434")
+    return OllamaEmbeddingProvider(
+        base_url="http://mac.test:11434",
+        model="qwen3-embedding:4b",
+        dimensions=4,
+        timeout_seconds=5,
+        client=client,
+    )
+
+
+async def test_ollama_parses_api_embed_response() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/embed"
+        return httpx.Response(200, json={"embeddings": [[0.1, 0.2, 0.3, 0.4]]})
+
+    provider = _ollama_with(handler)
+    assert await provider.embed_query("q") == [0.1, 0.2, 0.3, 0.4]
+
+
+async def test_ollama_supports_legacy_single_embedding() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"embedding": [0.1, 0.2, 0.3, 0.4]})
+
+    provider = _ollama_with(handler)
+    assert await provider.embed_query("q") == [0.1, 0.2, 0.3, 0.4]
+
+
+async def test_ollama_dimension_mismatch_fails_closed() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"embeddings": [[0.1, 0.2]]})
+
+    provider = _ollama_with(handler)
+    with pytest.raises(EmbeddingIncompatibleError):
+        await provider.embed_query("q")
+
+
+async def test_ollama_transport_error_is_wrapped() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("no route")
+
+    provider = _ollama_with(handler)
+    with pytest.raises(EmbeddingUnavailableError):
+        await provider.embed_query("q")
+
+
+def test_build_provider_selects_ollama() -> None:
+    from synology_rag.adapters.embedding_provider import build_embedding_provider
+    from tests.conftest import make_settings
+
+    settings = make_settings(
+        embedding_provider="ollama",
+        embedding_model="qwen3-embedding:4b",
+        embedding_dimensions=2560,
+        embedding_base_url="http://192.168.1.10:11434",
+    )
+    provider = build_embedding_provider(settings)
+    assert isinstance(provider, OllamaEmbeddingProvider)
+    assert provider.model == "qwen3-embedding:4b"
+    assert provider.dimensions == 2560

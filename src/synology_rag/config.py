@@ -21,7 +21,7 @@ from __future__ import annotations
 import re
 from enum import StrEnum
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 import yaml
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, field_validator, model_validator
@@ -76,6 +76,7 @@ OptStr = Annotated[str | None, BeforeValidator(_empty_to_none)]
 
 class EmbeddingProviderName(StrEnum):
     OPENAI_COMPATIBLE = "openai_compatible"
+    OLLAMA = "ollama"
     FAKE = "fake"
 
 
@@ -119,16 +120,24 @@ class PostgresCollectionMapping(BaseModel):
 
     Identifiers here come from trusted configuration and are validated as safe
     SQL identifiers so they can be composed with ``psycopg.sql.Identifier``.
+
+    ``lookup_key`` selects whether rows are matched per chunk or per document:
+    use ``chunk_id`` when per-chunk data (e.g. the chunk text) lives in
+    PostgreSQL keyed by chunk id. ``drop_if_missing`` removes a result whose row
+    is absent, which is how liveness is enforced when the approved view already
+    excludes removed/superseded rows.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     schema_name: str = Field(default="public", alias="schema")
     table: str
-    document_id_column: str = "document_id"
+    lookup_key: Literal["document_id", "chunk_id"] = "document_id"
+    key_column: str = "document_id"
     columns: dict[str, str] = Field(default_factory=dict)
+    drop_if_missing: bool = False
 
-    @field_validator("schema_name", "table", "document_id_column")
+    @field_validator("schema_name", "table", "key_column")
     @classmethod
     def _valid_identifier(cls, v: str) -> str:
         return _validate_identifier(v, what="PostgreSQL identifier")
@@ -228,6 +237,10 @@ class Settings(BaseSettings):
     qdrant_allowed_collections: str = "documents"
     qdrant_timeout_seconds: float = 5.0
     qdrant_prefer_grpc: bool = False
+    # Rescore with full-precision vectors when the collection uses scalar/product
+    # quantization (int8). Improves accuracy at a small latency cost; harmless on
+    # non-quantized collections.
+    qdrant_rescore: bool = True
 
     # PostgreSQL
     postgres_enabled: bool = False

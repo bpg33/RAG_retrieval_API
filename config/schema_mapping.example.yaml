@@ -65,10 +65,50 @@ collections:
       schema: public
       # Prefer a VIEW that exposes only client-safe columns.
       table: rag_document_metadata_v
-      document_id_column: document_id
+      # lookup_key: match rows per document ("document_id") or per chunk
+      # ("chunk_id" - use this when per-chunk data like the text lives in
+      # PostgreSQL keyed by chunk id).
+      lookup_key: document_id
+      key_column: document_id
+      # drop_if_missing: remove a result whose row is absent. Set true when the
+      # view already excludes removed/superseded rows, to enforce liveness.
+      drop_if_missing: false
       columns:
         filename: filename
         title: title
         source_uri: source_uri
         modified_at: modified_at
         file_type: file_type
+
+  # ---------------------------------------------------------------------------
+  # Example B (commented): chunk TEXT lives in PostgreSQL, keyed by chunk_id, and
+  # liveness is enforced by an approved VIEW that excludes removed rows. This is
+  # the pattern when Qdrant stores only vectors + metadata (e.g. an Ollama-built
+  # index). Point EMBEDDING_* at the same model/dimensions the indexer used.
+  #
+  # knowledge_chunks:
+  #   description: Indexed document chunks (text hydrated from PostgreSQL).
+  #   vector_name: null
+  #   metadata_source: both          # payload for ids/page/type; PostgreSQL for text
+  #   payload:
+  #     text: null                   # text is NOT in Qdrant
+  #     document_id: document_id
+  #     chunk_id: chunk_id           # payload chunk id (distinct from point id)
+  #     page_number: page_or_slide_number
+  #     section: section_title
+  #     file_type: file_type
+  #     modified_at: modified_time_ts
+  #   filters:
+  #     file_type: file_type
+  #   postgres:
+  #     schema: public
+  #     table: rag_retrieval_chunks_v # a VIEW that JOINs chunks->documents->files
+  #                                   # and WHERE files.status <> 'removed'
+  #     lookup_key: chunk_id
+  #     key_column: chunk_id
+  #     drop_if_missing: true         # a hit with no row = removed -> dropped
+  #     columns:
+  #       text: text_display
+  #       filename: file_name
+  #       title: title
+  #       modified_at: modified_time

@@ -52,7 +52,7 @@ def test_postgres_select_is_parameterised() -> None:
     pgm = PostgresCollectionMapping(
         schema="public",
         table="docs_v",
-        document_id_column="document_id",
+        key_column="document_id",
         columns={"filename": "filename", "title": "title"},
     )
     rendered = PostgresRepository._build_select(pgm).as_string(None)

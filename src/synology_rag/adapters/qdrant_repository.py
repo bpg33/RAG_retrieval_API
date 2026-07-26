@@ -83,8 +83,9 @@ def _to_qdrant_filter(query_filter: QueryFilter | None) -> qm.Filter | None:
 class QdrantRepository:
     """Async, read-only access to approved Qdrant collections."""
 
-    def __init__(self, client: AsyncQdrantClient) -> None:
+    def __init__(self, client: AsyncQdrantClient, *, rescore: bool = True) -> None:
         self._client = client
+        self._rescore = rescore
 
     @classmethod
     def from_settings(cls, settings: Settings) -> QdrantRepository:
@@ -94,7 +95,14 @@ class QdrantRepository:
             prefer_grpc=settings.qdrant_prefer_grpc,
             timeout=int(settings.qdrant_timeout_seconds),
         )
-        return cls(client)
+        return cls(client, rescore=settings.qdrant_rescore)
+
+    def _search_params(self) -> qm.SearchParams | None:
+        # Rescore with full-precision vectors on quantized collections. Ignored by
+        # Qdrant when the collection has no quantization, so it is safe to send.
+        if not self._rescore:
+            return None
+        return qm.SearchParams(quantization=qm.QuantizationSearchParams(rescore=True))
 
     async def search(
         self,
@@ -114,6 +122,7 @@ class QdrantRepository:
                 limit=limit,
                 query_filter=_to_qdrant_filter(query_filter),
                 score_threshold=score_threshold,
+                search_params=self._search_params(),
                 with_payload=True,
                 with_vectors=False,
             )

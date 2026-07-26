@@ -146,10 +146,10 @@ class InMemoryMetadataRepository:
     healthy: bool = True
 
     async def fetch_metadata(
-        self, *, collection: str, document_ids: list[str]
+        self, *, collection: str, keys: list[str]
     ) -> dict[str, dict[str, Any]]:
         coll_rows = self.rows.get(collection, {})
-        return {doc_id: coll_rows[doc_id] for doc_id in document_ids if doc_id in coll_rows}
+        return {key: coll_rows[key] for key in keys if key in coll_rows}
 
     async def health(self) -> bool:
         return self.healthy

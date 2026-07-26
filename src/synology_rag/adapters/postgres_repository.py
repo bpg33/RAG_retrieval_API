@@ -73,9 +73,9 @@ class PostgresRepository:
         await self._pool.close()
 
     async def fetch_metadata(
-        self, *, collection: str, document_ids: list[str]
+        self, *, collection: str, keys: list[str]
     ) -> dict[str, dict[str, Any]]:
-        if not document_ids:
+        if not keys:
             return {}
         coll = self._mapping.for_collection(collection)
         pgm = coll.postgres
@@ -85,7 +85,7 @@ class PostgresRepository:
         query = self._build_select(pgm)
         try:
             async with self._pool.connection() as conn:
-                cursor = await conn.execute(query, (list(document_ids),))
+                cursor = await conn.execute(query, (list(keys),))
                 rows = cast(list[dict[str, Any]], await cursor.fetchall())
         except _TRANSIENT as exc:
             raise PostgresUnavailableError(
@@ -96,26 +96,31 @@ class PostgresRepository:
         col_to_field = {column: field for field, column in pgm.columns.items()}
         result: dict[str, dict[str, Any]] = {}
         for row in rows:
-            doc_id = str(row[pgm.document_id_column])
+            key = str(row[pgm.key_column])
             fields: dict[str, Any] = {}
             for column, value in row.items():
-                if column == pgm.document_id_column:
+                if column == pgm.key_column:
                     continue
                 field = col_to_field.get(column)
                 if field is not None and value is not None:
                     fields[field] = value
-            result[doc_id] = fields
+            result[key] = fields
         return result
 
     @staticmethod
     def _build_select(pgm: PostgresCollectionMapping) -> sql.Composed:
-        select_cols: list[sql.Composable] = [sql.Identifier(pgm.document_id_column)]
-        select_cols.extend(sql.Identifier(column) for column in pgm.columns.values())
+        # The key column is always selected; other columns come from the mapping.
+        select_cols: list[sql.Composable] = [sql.Identifier(pgm.key_column)]
+        select_cols.extend(
+            sql.Identifier(column)
+            for column in pgm.columns.values()
+            if column != pgm.key_column
+        )
         return sql.SQL("SELECT {cols} FROM {schema}.{table} WHERE {idcol} = ANY(%s)").format(
             cols=sql.SQL(", ").join(select_cols),
             schema=sql.Identifier(pgm.schema_name),
             table=sql.Identifier(pgm.table),
-            idcol=sql.Identifier(pgm.document_id_column),
+            idcol=sql.Identifier(pgm.key_column),
         )
 
     async def health(self) -> bool:

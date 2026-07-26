@@ -138,7 +138,18 @@ class RetrievalService:
 
         deduped = deduplicate(candidates)
         ranked = rank_primary(deduped)
-        primaries = ranked[: validated.limit]
+
+        # Hydrate a working set (with buffer) so liveness drops can be backfilled,
+        # then cap to the requested limit. For Qdrant-only collections hydration is
+        # a no-op and this simply slices the top results.
+        working_size = min(len(ranked), max(validated.limit * 2, validated.limit + 10))
+        working = ranked[:working_size]
+        working, hydrate_warnings = await enrich_candidates(
+            working, self._mapping, self._metadata
+        )
+        warnings.extend(hydrate_warnings)
+
+        primaries = working[: validated.limit]
         # Assign primary ranks before neighbour expansion so neighbours inherit.
         for index, cand in enumerate(primaries, start=1):
             cand.chunk.rank = index
@@ -152,10 +163,11 @@ class RetrievalService:
                 neighbours_before=validated.neighbours_before,
                 neighbours_after=validated.neighbours_after,
             )
-
-        warnings.extend(
-            await enrich_candidates(primaries + neighbours, self._mapping, self._metadata)
-        )
+            if neighbours:
+                neighbours, n_warnings = await enrich_candidates(
+                    neighbours, self._mapping, self._metadata
+                )
+                warnings.extend(n_warnings)
 
         ordered = _interleave(primaries, neighbours)
         budget = apply_context_budget(
@@ -181,7 +193,7 @@ class RetrievalService:
             citations=citations,
             search_id=search_id,
             elapsed_ms=elapsed_ms,
-            warnings=warnings,
+            warnings=list(dict.fromkeys(warnings)),  # de-duplicate, preserve order
             truncated=budget.truncated,
         )
 
@@ -214,7 +226,8 @@ class RetrievalService:
     async def _document_from_hit(self, hit: VectorHit, collection: str) -> DocumentMetadata:
         coll = self._mapping.for_collection(collection)
         cand = chunk_from_hit(hit, coll)
-        await enrich_candidates([cand], self._mapping, self._metadata)
+        kept, _ = await enrich_candidates([cand], self._mapping, self._metadata)
+        cand = kept[0] if kept else cand
         chunk = cand.chunk
         created = _coerce_datetime(
             hit.payload.get(coll.payload.created_at) if coll.payload.created_at else None
@@ -245,13 +258,20 @@ class RetrievalService:
         if found is None:
             raise ChunkNotFoundError(f"No chunk found with id {chunk_id!r}.")
         _collection, cand = found
+
+        kept, warnings = await enrich_candidates([cand], self._mapping, self._metadata)
+        cand = kept[0] if kept else cand
         cand.chunk.rank = 1
 
         neighbours = await expand_neighbours(
             [cand], repo=self._vectors, mapping=self._mapping,
             neighbours_before=nb, neighbours_after=na,
         )
-        warnings = await enrich_candidates([cand, *neighbours], self._mapping, self._metadata)
+        if neighbours:
+            neighbours, n_warnings = await enrich_candidates(
+                neighbours, self._mapping, self._metadata
+            )
+            warnings.extend(n_warnings)
 
         ordered = _interleave([cand], neighbours)
         budget = apply_context_budget(

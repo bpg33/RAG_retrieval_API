@@ -177,9 +177,107 @@ class OpenAICompatibleEmbeddingProvider:
             self._client = None
 
 
+class OllamaEmbeddingProvider:
+    """Query embeddings via Ollama's native ``POST /api/embed`` endpoint.
+
+    Used when the indexing pipeline embeds with Ollama (e.g. ``qwen3-embedding``).
+    Calling the same native endpoint as the indexer guarantees the query vector
+    is produced by the identical code path as the stored document vectors.
+    """
+
+    def __init__(
+        self,
+        *,
+        base_url: str,
+        model: str,
+        dimensions: int,
+        timeout_seconds: float,
+        normalise: bool = False,
+        client: httpx.AsyncClient | None = None,
+    ) -> None:
+        self._base_url = base_url.rstrip("/")
+        self._model = model
+        self._dimensions = dimensions
+        self._timeout = timeout_seconds
+        self._normalise = normalise
+        self._client = client
+        self._owns_client = client is None
+
+    @property
+    def model(self) -> str:
+        return self._model
+
+    @property
+    def dimensions(self) -> int:
+        return self._dimensions
+
+    def _get_client(self) -> httpx.AsyncClient:
+        if self._client is None:
+            self._client = httpx.AsyncClient(base_url=self._base_url, timeout=self._timeout)
+        return self._client
+
+    async def embed_query(self, text: str) -> list[float]:
+        client = self._get_client()
+        try:
+            response = await client.post(
+                "/api/embed", json={"model": self._model, "input": text}
+            )
+        except httpx.HTTPError as exc:
+            raise EmbeddingUnavailableError(
+                "The embedding provider (Ollama) is currently unavailable.",
+                internal_detail=type(exc).__name__,
+            ) from exc
+
+        if response.status_code >= 400:
+            raise EmbeddingUnavailableError(
+                "The embedding provider (Ollama) returned an error.",
+                internal_detail=f"http {response.status_code}",
+            )
+
+        vector = self._parse_embedding(response.json())
+        if len(vector) != self._dimensions:
+            raise EmbeddingIncompatibleError(
+                "The embedding model produced vectors of an unexpected size; it does "
+                "not match the configured index dimensions.",
+                internal_detail=f"expected {self._dimensions}, got {len(vector)}",
+            )
+        return _l2_normalise(vector) if self._normalise else vector
+
+    @staticmethod
+    def _parse_embedding(body: dict[str, Any]) -> list[float]:
+        # /api/embed returns {"embeddings": [[...]]}; older /api/embeddings returns
+        # {"embedding": [...]}. Support both defensively.
+        try:
+            embedding = body["embeddings"][0] if "embeddings" in body else body["embedding"]
+        except (KeyError, IndexError, TypeError) as exc:
+            raise EmbeddingUnavailableError(
+                "The embedding provider (Ollama) returned an unexpected response shape.",
+                internal_detail=type(exc).__name__,
+            ) from exc
+        return [float(x) for x in embedding]
+
+    async def health(self) -> bool:
+        client = self._get_client()
+        try:
+            response = await client.get("/api/tags")
+        except httpx.HTTPError:
+            return False
+        return response.status_code < 500
+
+    async def aclose(self) -> None:
+        if self._client is not None and self._owns_client:
+            await self._client.aclose()
+            self._client = None
+
+
+EmbeddingProviderImpl = (
+    FakeEmbeddingProvider | OpenAICompatibleEmbeddingProvider | OllamaEmbeddingProvider
+)
+
+
 def build_embedding_provider(
     settings: Settings, *, client: httpx.AsyncClient | None = None
-) -> FakeEmbeddingProvider | OpenAICompatibleEmbeddingProvider:
+) -> EmbeddingProviderImpl:
     """Construct the configured embedding provider."""
     if settings.embedding_provider == EmbeddingProviderName.FAKE:
         dims = settings.embedding_dimensions or 384
@@ -188,8 +286,19 @@ def build_embedding_provider(
     if settings.embedding_model is None or settings.embedding_dimensions is None:
         raise ConfigurationError(
             "EMBEDDING_MODEL and EMBEDDING_DIMENSIONS are required for the "
-            "openai_compatible provider."
+            f"{settings.embedding_provider.value} provider."
         )
+
+    if settings.embedding_provider == EmbeddingProviderName.OLLAMA:
+        return OllamaEmbeddingProvider(
+            base_url=settings.embedding_base_url,
+            model=settings.embedding_model,
+            dimensions=settings.embedding_dimensions,
+            timeout_seconds=settings.embedding_timeout_seconds,
+            normalise=settings.embedding_normalise,
+            client=client,
+        )
+
     return OpenAICompatibleEmbeddingProvider(
         base_url=settings.embedding_base_url,
         model=settings.embedding_model,

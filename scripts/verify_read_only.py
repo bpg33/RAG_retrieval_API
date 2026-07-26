@@ -115,7 +115,7 @@ def check_postgres_rejects_write() -> tuple[str, list[str]]:
     )
     stmt = (
         f'UPDATE "{target.schema_name}"."{target.table}" '
-        f'SET "{target.document_id_column}" = "{target.document_id_column}" WHERE false'
+        f'SET "{target.key_column}" = "{target.key_column}" WHERE false'
     )
     try:
         with psycopg.connect(conninfo, autocommit=False) as conn:

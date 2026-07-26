@@ -17,9 +17,17 @@ cause. Common ones:
 
 ## Connectivity
 
+- **Ping works but the port is refused** (`TcpTestSucceeded: False`): the host is
+  up but the service isn't listening on that interface. Commonly the DB/vector
+  containers are published to `127.0.0.1` only, or are on a *different host* than
+  you assumed (e.g. the index runs on the Mac mini, not the Synology). Point
+  `QDRANT_URL`/`POSTGRES_HOST` at the host that actually runs them, publish the
+  container ports to the LAN (`0.0.0.0:PORT` or `<host-ip>:PORT`), and allow the
+  desktop's IP through that host's firewall. If embeddings come from Ollama, it
+  must also listen on the LAN (`OLLAMA_HOST=0.0.0.0`).
 - **Qdrant unreachable** (`qdrant_unavailable`): verify `QDRANT_URL` and that the
-  Synology firewall allows the desktop's IP to port 6333. Test:
-  `curl http://synology.local:6333/collections`.
+  host firewall allows the desktop's IP to the Qdrant port. Test:
+  `curl http://<host>:6333/collections`.
 - **PostgreSQL unreachable** (`postgres_unavailable`): check host/port/SSL and the
   reader account. Test with `psql` using the reader credentials.
 - **From Docker**, `localhost` means the container. Use the Synology's LAN address

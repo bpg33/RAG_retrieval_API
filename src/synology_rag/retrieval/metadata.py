@@ -17,7 +17,18 @@ from synology_rag.domain.ports import MetadataRepository, VectorHit
 from synology_rag.retrieval.candidate import Candidate
 
 # Fields that PostgreSQL enrichment is allowed to populate on a chunk.
-_ENRICHABLE = ("text", "filename", "title", "file_type", "source_uri", "modified_at")
+_ENRICHABLE = (
+    "text",
+    "filename",
+    "title",
+    "file_type",
+    "source_uri",
+    "modified_at",
+    "page_number",
+    "slide_number",
+    "sheet_name",
+    "section",
+)
 
 
 def _coerce_int(value: Any) -> int | None:
@@ -115,11 +126,17 @@ async def enrich_candidates(
     candidates: list[Candidate],
     mapping: SchemaMapping,
     repo: MetadataRepository | None,
-) -> list[str]:
-    """Fill missing citation fields from PostgreSQL. Returns warnings."""
+) -> tuple[list[Candidate], list[str]]:
+    """Hydrate candidates from PostgreSQL and enforce liveness.
+
+    Fills missing fields (including chunk text) from the approved view, keyed per
+    the collection's ``lookup_key``. When ``drop_if_missing`` is set, a candidate
+    whose row is absent is dropped - this is how liveness works when the view
+    already excludes removed/superseded rows. Returns ``(kept, warnings)``.
+    """
     warnings: list[str] = []
     if not candidates:
-        return warnings
+        return candidates, warnings
 
     by_collection: dict[str, list[Candidate]] = {}
     for cand in candidates:
@@ -129,18 +146,26 @@ async def enrich_candidates(
         by_collection.setdefault(cand.chunk.collection, []).append(cand)
 
     if not by_collection:
-        return warnings
+        return candidates, warnings
 
     if repo is None:
-        warnings.append(
-            "Metadata database is not configured; returning Qdrant metadata only."
-        )
-        return warnings
+        warnings.append("Metadata database is not configured; returning Qdrant metadata only.")
+        return candidates, warnings
 
+    drop: set[int] = set()
     for collection, cands in by_collection.items():
-        document_ids = sorted({c.chunk.document_id for c in cands})
+        coll = mapping.for_collection(collection)
+        pgm = coll.postgres
+        if pgm is None:  # pragma: no cover - guarded by config validation
+            continue
+        use_chunk = pgm.lookup_key == "chunk_id"
+
+        def key_of(cand: Candidate, *, use_chunk: bool = use_chunk) -> str:
+            return cand.chunk.chunk_id if use_chunk else cand.chunk.document_id
+
+        keys = sorted({key_of(c) for c in cands})
         try:
-            rows = await repo.fetch_metadata(collection=collection, document_ids=document_ids)
+            rows = await repo.fetch_metadata(collection=collection, keys=keys)
         except Exception:  # PostgresUnavailableError etc.; degrade gracefully
             warnings.append(
                 f"Metadata enrichment for collection '{collection}' is temporarily "
@@ -148,10 +173,27 @@ async def enrich_candidates(
             )
             continue
         for cand in cands:
-            fields = rows.get(cand.chunk.document_id)
-            if fields:
-                _apply_pg_fields(cand.chunk, fields)
-    return warnings
+            fields = rows.get(key_of(cand))
+            if fields is None:
+                if pgm.drop_if_missing:
+                    drop.add(id(cand))
+                continue
+            _apply_pg_fields(cand.chunk, fields)
+            if cand.sequence is None and "sequence" in fields:
+                cand.sequence = _coerce_int(fields["sequence"])
+
+    if not drop:
+        return candidates, warnings
+    kept = [c for c in candidates if id(c) not in drop]
+    if len(kept) < len(candidates):
+        warnings.append(
+            f"{len(candidates) - len(kept)} result(s) omitted: no longer present in the index."
+        )
+    return kept, warnings
+
+
+_INT_FIELDS = frozenset({"page_number", "slide_number"})
+_DATETIME_FIELDS = frozenset({"modified_at"})
 
 
 def _apply_pg_fields(chunk: RetrievedChunk, fields: dict[str, Any]) -> None:
@@ -159,15 +201,16 @@ def _apply_pg_fields(chunk: RetrievedChunk, fields: dict[str, Any]) -> None:
     for field in _ENRICHABLE:
         if field not in fields:
             continue
-        current = getattr(chunk, field)
         if field == "text":
-            if not current:
+            if not chunk.text:
                 chunk.text = _coerce_str(fields["text"]) or ""
             continue
-        if current is None:
-            value = (
-                _coerce_datetime(fields[field])
-                if field == "modified_at"
-                else _coerce_str(fields[field])
-            )
-            setattr(chunk, field, value)
+        if getattr(chunk, field) is not None:
+            continue
+        if field in _INT_FIELDS:
+            value: Any = _coerce_int(fields[field])
+        elif field in _DATETIME_FIELDS:
+            value = _coerce_datetime(fields[field])
+        else:
+            value = _coerce_str(fields[field])
+        setattr(chunk, field, value)
