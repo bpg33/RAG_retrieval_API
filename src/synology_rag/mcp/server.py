@@ -111,6 +111,9 @@ def build_mcp(container: AppContainer) -> FastMCP:
 
 
 def main() -> None:
+    from synology_rag.runtime import configure_event_loop
+
+    configure_event_loop()
     settings = Settings()
     configure_logging(level=settings.log_level, json_logs=True)
     if not settings.enable_mcp:

@@ -6,9 +6,11 @@ import uvicorn
 
 from synology_rag.config import Settings
 from synology_rag.observability.logging import configure_logging
+from synology_rag.runtime import configure_event_loop
 
 
 def main() -> None:
+    configure_event_loop()
     settings = Settings()
     configure_logging(level=settings.log_level, json_logs=True)
     if not settings.enable_rest_api:

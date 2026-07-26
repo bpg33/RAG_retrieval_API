@@ -16,6 +16,11 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
+# Async psycopg needs a SelectorEventLoop on Windows (see synology_rag.runtime).
+from synology_rag.runtime import configure_event_loop  # noqa: E402
+
+configure_event_loop()
+
 
 def load_env(path: str | os.PathLike[str] | None = None) -> None:
     """Minimal ``.env`` loader (does not override already-set variables)."""

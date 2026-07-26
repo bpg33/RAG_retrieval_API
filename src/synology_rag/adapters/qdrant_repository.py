@@ -94,6 +94,10 @@ class QdrantRepository:
             api_key=settings.qdrant_api_key,
             prefer_grpc=settings.qdrant_prefer_grpc,
             timeout=int(settings.qdrant_timeout_seconds),
+            # The read ops used here (query_points/scroll/retrieve/collection info)
+            # are stable across a client/server minor-version gap; skip the check
+            # so a newer client against an older server does not warn on every call.
+            check_compatibility=False,
         )
         return cls(client, rescore=settings.qdrant_rescore)
 
