@@ -39,7 +39,7 @@ _TRANSIENT: tuple[type[Exception], ...] = (
 # When prefer_grpc=true, transport failures surface as grpc.RpcError. Include it
 # so they map to a retryable QdrantUnavailableError rather than a generic 500.
 try:  # pragma: no cover - depends on optional grpc extra
-    from grpc import RpcError as _GrpcRpcError  # type: ignore[import-untyped]
+    from grpc import RpcError as _GrpcRpcError
 
     _TRANSIENT = (*_TRANSIENT, _GrpcRpcError)
 except ImportError:  # pragma: no cover
