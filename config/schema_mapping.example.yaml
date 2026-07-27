@@ -90,6 +90,11 @@ collections:
   #   description: Indexed document chunks (text hydrated from PostgreSQL).
   #   vector_name: null
   #   metadata_source: both          # payload for ids/page/type; PostgreSQL for text
+  #   # Chunk order lives in PostgreSQL (chunk_index), so fetch neighbours from
+  #   # there rather than Qdrant. Requires postgres.document_id_column and a
+  #   # `sequence` column below. Use "qdrant" (default) if the order is a payload
+  #   # key instead.
+  #   neighbour_source: postgres
   #   payload:
   #     text: null                   # text is NOT in Qdrant
   #     document_id: document_id
@@ -106,12 +111,14 @@ collections:
   #                                   # and WHERE files.status <> 'removed'
   #     lookup_key: chunk_id
   #     key_column: chunk_id
+  #     document_id_column: document_id   # for postgres neighbour expansion
   #     drop_if_missing: true         # a hit with no row = removed -> dropped
   #     columns:
   #       text: text_display
   #       filename: file_name
   #       title: title
   #       modified_at: modified_time
+  #       sequence: chunk_index       # chunk order, for postgres neighbours
   #   # Optional: return an openable link to the source document. Reconstructs a
   #   # path your machine can open from the stored (container/host) path. Example
   #   # maps a container path "/data/…" to a Windows UNC path on the Synology

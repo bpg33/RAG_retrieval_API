@@ -136,11 +136,20 @@ class PostgresCollectionMapping(BaseModel):
     key_column: str = "document_id"
     columns: dict[str, str] = Field(default_factory=dict)
     drop_if_missing: bool = False
+    # Column for the document id, used only for PostgreSQL neighbour expansion
+    # (WHERE document_id = ? AND sequence BETWEEN ...). Requires a `sequence`
+    # column in `columns`.
+    document_id_column: str | None = None
 
     @field_validator("schema_name", "table", "key_column")
     @classmethod
     def _valid_identifier(cls, v: str) -> str:
         return _validate_identifier(v, what="PostgreSQL identifier")
+
+    @field_validator("document_id_column")
+    @classmethod
+    def _valid_optional_identifier(cls, v: str | None) -> str | None:
+        return _validate_identifier(v, what="PostgreSQL identifier") if v else v
 
     @field_validator("columns")
     @classmethod
@@ -186,6 +195,21 @@ class CollectionMapping(BaseModel):
     filters: dict[str, str] = Field(default_factory=dict)
     postgres: PostgresCollectionMapping | None = None
     source_uri: SourceUriTemplate | None = None
+    # Where neighbouring chunks come from: "qdrant" (adjacent by a sequence
+    # payload key) or "postgres" (adjacent by a sequence column, for indexes
+    # whose chunk order lives only in PostgreSQL).
+    neighbour_source: Literal["qdrant", "postgres"] = "qdrant"
+
+    @model_validator(mode="after")
+    def _check_neighbour_source(self) -> CollectionMapping:
+        if self.neighbour_source == "postgres":
+            pg = self.postgres
+            if pg is None or pg.document_id_column is None or "sequence" not in pg.columns:
+                raise ValueError(
+                    "neighbour_source='postgres' requires a postgres mapping with "
+                    "document_id_column set and a 'sequence' column mapped"
+                )
+        return self
 
     @model_validator(mode="after")
     def _check_consistency(self) -> CollectionMapping:
@@ -308,6 +332,7 @@ class Settings(BaseSettings):
     # Reliability
     search_timeout_seconds: float = 10.0
     max_retries: int = 2
+    retry_base_delay_seconds: float = 0.2
     # When multiple collections are searched and one is unavailable: if true,
     # return partial results with a warning; if false (default), fail the search.
     partial_results_on_collection_error: bool = False

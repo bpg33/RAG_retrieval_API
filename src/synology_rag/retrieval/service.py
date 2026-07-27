@@ -8,8 +8,10 @@ across protocols.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
+from functools import partial
 from time import perf_counter
+from typing import TypeVar
 
 from ulid import ULID
 
@@ -55,10 +57,12 @@ from synology_rag.retrieval.metadata import (
 from synology_rag.retrieval.neighbours import expand_neighbours
 from synology_rag.retrieval.query_normalisation import normalise_query
 from synology_rag.retrieval.ranking import rank_primary
+from synology_rag.retrieval.retry import with_retries
 from synology_rag.retrieval.validation import validate_search_request
 from synology_rag.retrieval.versions import collapse_versions
 
 IdFactory = Callable[[], str]
+_T = TypeVar("_T")
 
 
 def _default_id() -> str:
@@ -103,7 +107,9 @@ class RetrievalService:
             request, self._settings, known_filter_names=self._known_filters
         )
         normalised = normalise_query(validated.query)
-        vector = await generate_query_embedding(self._embed, normalised.normalised)
+        vector = await self._retry(
+            lambda: generate_query_embedding(self._embed, normalised.normalised)
+        )
 
         warnings = list(validated.warnings)
         searched_mappings = [self._mapping.for_collection(c) for c in validated.collections]
@@ -114,15 +120,17 @@ class RetrievalService:
         failed: list[str] = []
         for collection in validated.collections:
             coll = self._mapping.for_collection(collection)
+            search = partial(
+                self._vectors.search,
+                collection=collection,
+                vector=vector,
+                vector_name=coll.vector_name,
+                limit=candidate_limit,
+                query_filter=build_query_filter(validated, coll),
+                score_threshold=validated.minimum_score,
+            )
             try:
-                hits = await self._vectors.search(
-                    collection=collection,
-                    vector=vector,
-                    vector_name=coll.vector_name,
-                    limit=candidate_limit,
-                    query_filter=build_query_filter(validated, coll),
-                    score_threshold=validated.minimum_score,
-                )
+                hits = await self._retry(search)
             except QdrantUnavailableError:
                 if not self._settings.partial_results_on_collection_error:
                     raise
@@ -169,7 +177,8 @@ class RetrievalService:
         if validated.include_neighbours:
             neighbours = await expand_neighbours(
                 primaries,
-                repo=self._vectors,
+                vector_repo=self._vectors,
+                metadata_repo=self._metadata,
                 mapping=self._mapping,
                 neighbours_before=validated.neighbours_before,
                 neighbours_after=validated.neighbours_after,
@@ -211,6 +220,13 @@ class RetrievalService:
     def _candidate_limit(self, limit: int) -> int:
         oversampled = limit * self._settings.candidate_multiplier
         return max(limit, min(oversampled, self._settings.max_candidates))
+
+    async def _retry(self, factory: Callable[[], Awaitable[_T]]) -> _T:
+        return await with_retries(
+            factory,
+            retries=self._settings.max_retries,
+            base_delay=self._settings.retry_base_delay_seconds,
+        )
 
     # -- Document metadata ---------------------------------------------------
     async def get_document_metadata(self, document_id: str) -> DocumentMetadata:
@@ -275,8 +291,12 @@ class RetrievalService:
         cand.chunk.rank = 1
 
         neighbours = await expand_neighbours(
-            [cand], repo=self._vectors, mapping=self._mapping,
-            neighbours_before=nb, neighbours_after=na,
+            [cand],
+            vector_repo=self._vectors,
+            metadata_repo=self._metadata,
+            mapping=self._mapping,
+            neighbours_before=nb,
+            neighbours_after=na,
         )
         if neighbours:
             neighbours, n_warnings = await enrich_candidates(

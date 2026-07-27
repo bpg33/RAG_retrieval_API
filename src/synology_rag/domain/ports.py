@@ -139,4 +139,13 @@ class MetadataRepository(Protocol):
         configured ``lookup_key``.
         """
 
+    async def fetch_neighbours(
+        self, *, collection: str, document_id: str, low: int, high: int
+    ) -> list[dict[str, Any]]:
+        """Return chunk rows for a document within an inclusive sequence range.
+
+        Each row includes ``chunk_id``, ``document_id``, and mapped domain fields.
+        Used for PostgreSQL-based neighbour expansion.
+        """
+
     async def health(self) -> bool: ...

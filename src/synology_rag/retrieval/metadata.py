@@ -134,6 +134,27 @@ def _build_source_uri(
     return uri
 
 
+def chunk_from_row(row: dict[str, Any], collection: str) -> Candidate:
+    """Build a candidate from a PostgreSQL neighbour row (domain-field dict)."""
+    chunk = RetrievedChunk(
+        chunk_id=_coerce_str(row.get("chunk_id")) or "",
+        document_id=_coerce_str(row.get("document_id")) or "",
+        text=_coerce_str(row.get("text")) or "",
+        score=0.0,
+        rank=0,
+        collection=collection,
+        filename=_coerce_str(row.get("filename")),
+        title=_coerce_str(row.get("title")),
+        page_number=_coerce_int(row.get("page_number")),
+        slide_number=_coerce_int(row.get("slide_number")),
+        sheet_name=_coerce_str(row.get("sheet_name")),
+        section=_coerce_str(row.get("section")),
+        file_type=_coerce_str(row.get("file_type")),
+        modified_at=_coerce_datetime(row.get("modified_at")),
+    )
+    return Candidate(chunk=chunk, sequence=_coerce_int(row.get("sequence")))
+
+
 def active_flag(payload: dict[str, Any], coll: CollectionMapping) -> bool | None:
     """Return the latest/active-version flag if the collection maps one."""
     key = coll.payload.active_flag

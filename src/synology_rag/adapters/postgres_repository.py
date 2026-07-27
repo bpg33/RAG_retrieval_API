@@ -107,6 +107,68 @@ class PostgresRepository:
             result[key] = fields
         return result
 
+    async def fetch_neighbours(
+        self, *, collection: str, document_id: str, low: int, high: int
+    ) -> list[dict[str, Any]]:
+        """Return chunk rows for the same document within a sequence range.
+
+        Used for PostgreSQL-based neighbour expansion. Each row includes
+        ``chunk_id`` and ``document_id`` plus the mapped domain fields.
+        """
+        coll = self._mapping.for_collection(collection)
+        pgm = coll.postgres
+        if pgm is None or pgm.document_id_column is None:
+            return []
+        seq_col = pgm.columns.get("sequence")
+        if seq_col is None:
+            return []
+
+        query = self._build_neighbour_select(pgm, seq_col)
+        try:
+            async with self._pool.connection() as conn:
+                cursor = await conn.execute(query, (document_id, low, high))
+                rows = cast(list[dict[str, Any]], await cursor.fetchall())
+        except _TRANSIENT as exc:
+            raise PostgresUnavailableError(
+                "The metadata database is currently unavailable.",
+                internal_detail=type(exc).__name__,
+            ) from exc
+
+        col_to_field = {column: field for field, column in pgm.columns.items()}
+        result: list[dict[str, Any]] = []
+        for row in rows:
+            record: dict[str, Any] = {
+                "chunk_id": str(row[pgm.key_column]),
+                "document_id": str(row[pgm.document_id_column]),
+            }
+            for column, value in row.items():
+                if column in (pgm.key_column, pgm.document_id_column):
+                    continue
+                field = col_to_field.get(column)
+                if field is not None:
+                    record[field] = value
+            result.append(record)
+        return result
+
+    @staticmethod
+    def _build_neighbour_select(pgm: PostgresCollectionMapping, seq_col: str) -> sql.Composed:
+        assert pgm.document_id_column is not None
+        select_names = [pgm.key_column, pgm.document_id_column]
+        select_names.extend(
+            c for c in pgm.columns.values() if c not in (pgm.key_column, pgm.document_id_column)
+        )
+        cols = sql.SQL(", ").join(sql.Identifier(name) for name in select_names)
+        return sql.SQL(
+            "SELECT {cols} FROM {schema}.{table} "
+            "WHERE {doc} = %s AND {seq} BETWEEN %s AND %s ORDER BY {seq}"
+        ).format(
+            cols=cols,
+            schema=sql.Identifier(pgm.schema_name),
+            table=sql.Identifier(pgm.table),
+            doc=sql.Identifier(pgm.document_id_column),
+            seq=sql.Identifier(seq_col),
+        )
+
     @staticmethod
     def _build_select(pgm: PostgresCollectionMapping) -> sql.Composed:
         # The key column is always selected; other columns come from the mapping.
