@@ -79,7 +79,10 @@ protocols and be tested with in-memory fakes (`tests/fakes.py`).
 8. **Rank** (`ranking.py`) — vector similarity first, active-version preference
    as a tie-breaker.
 9. **Neighbours** (`neighbours.py`) — adjacent chunks by explicit sequence
-   metadata only; marked, de-duplicated, never displacing primaries.
+   metadata only; marked, de-duplicated, never displacing primaries. Per
+   collection, `neighbour_source` selects a Qdrant sequence payload key or a
+   PostgreSQL sequence column (for indexes whose chunk order lives only in the
+   database).
 10. **Context budget** (`context_budget.py`) — cap total chunks, per-chunk chars,
     and total chars; truncation is explicit.
 11. **Citations** (`citations.py`) — one stable citation per document with a

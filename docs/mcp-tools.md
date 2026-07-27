@@ -34,8 +34,11 @@ Input:
 
 Output (bounded): `query`, `search_id`, `result_count`, `elapsed_ms`,
 `truncated`, `warnings`, `results[]` (each with `rank`, `text`, `source`,
-`locator`, `document_id`, `chunk_id`, `score`, `is_neighbour`, `citation`), and
-`citations[]`. It warns when evidence is weak or filters removed all results.
+`locator`, `source_uri`, `document_id`, `chunk_id`, `score`, `is_neighbour`,
+`citation`), and `citations[]` (each with `source_uri`). It warns when evidence
+is weak or filters removed all results. `source_uri` is a client-openable link
+to the source document (with `#page=N` for PDFs) when configured — so the model
+can cite an openable link to the relevant page.
 
 ### `get_document_metadata`
 

@@ -104,7 +104,55 @@ def chunk_from_hit(hit: VectorHit, coll: CollectionMapping) -> Candidate:
         source_uri=_coerce_str(_get(payload, p.source_uri)),
         modified_at=_coerce_datetime(_get(payload, p.modified_at)),
     )
+    if coll.source_uri is not None:
+        chunk.source_uri = _build_source_uri(payload, coll, chunk)
     return Candidate(chunk=chunk, sequence=sequence, active=active_flag(payload, coll))
+
+
+def _build_source_uri(
+    payload: dict[str, Any], coll: CollectionMapping, chunk: RetrievedChunk
+) -> str | None:
+    """Reconstruct a client-openable URI from a stored path via the template."""
+    template = coll.source_uri
+    if template is None:
+        return None
+    raw = _coerce_str(payload.get(template.from_payload))
+    if not raw:
+        return None
+    path = raw
+    if template.strip_prefix and path.startswith(template.strip_prefix):
+        path = path[len(template.strip_prefix) :]
+    if template.separator is not None:
+        path = path.replace("/", template.separator)
+    uri = f"{template.add_prefix}{path}"
+    if (
+        template.pdf_page_anchor
+        and (chunk.file_type or "").lower() == "pdf"
+        and chunk.page_number is not None
+    ):
+        uri += f"#page={chunk.page_number}"
+    return uri
+
+
+def chunk_from_row(row: dict[str, Any], collection: str) -> Candidate:
+    """Build a candidate from a PostgreSQL neighbour row (domain-field dict)."""
+    chunk = RetrievedChunk(
+        chunk_id=_coerce_str(row.get("chunk_id")) or "",
+        document_id=_coerce_str(row.get("document_id")) or "",
+        text=_coerce_str(row.get("text")) or "",
+        score=0.0,
+        rank=0,
+        collection=collection,
+        filename=_coerce_str(row.get("filename")),
+        title=_coerce_str(row.get("title")),
+        page_number=_coerce_int(row.get("page_number")),
+        slide_number=_coerce_int(row.get("slide_number")),
+        sheet_name=_coerce_str(row.get("sheet_name")),
+        section=_coerce_str(row.get("section")),
+        file_type=_coerce_str(row.get("file_type")),
+        modified_at=_coerce_datetime(row.get("modified_at")),
+    )
+    return Candidate(chunk=chunk, sequence=_coerce_int(row.get("sequence")))
 
 
 def active_flag(payload: dict[str, Any], coll: CollectionMapping) -> bool | None:

@@ -143,6 +143,9 @@ class InMemoryMetadataRepository:
     """Returns pre-seeded metadata rows. Read-only."""
 
     rows: dict[str, dict[str, dict[str, Any]]] = field(default_factory=dict)
+    # collection -> list of neighbour rows (each a domain-field dict incl.
+    # document_id, chunk_id, sequence).
+    neighbour_rows: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     healthy: bool = True
 
     async def fetch_metadata(
@@ -150,6 +153,16 @@ class InMemoryMetadataRepository:
     ) -> dict[str, dict[str, Any]]:
         coll_rows = self.rows.get(collection, {})
         return {key: coll_rows[key] for key in keys if key in coll_rows}
+
+    async def fetch_neighbours(
+        self, *, collection: str, document_id: str, low: int, high: int
+    ) -> list[dict[str, Any]]:
+        rows = self.neighbour_rows.get(collection, [])
+        return [
+            row
+            for row in rows
+            if row.get("document_id") == document_id and low <= int(row["sequence"]) <= high
+        ]
 
     async def health(self) -> bool:
         return self.healthy

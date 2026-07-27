@@ -136,11 +136,20 @@ class PostgresCollectionMapping(BaseModel):
     key_column: str = "document_id"
     columns: dict[str, str] = Field(default_factory=dict)
     drop_if_missing: bool = False
+    # Column for the document id, used only for PostgreSQL neighbour expansion
+    # (WHERE document_id = ? AND sequence BETWEEN ...). Requires a `sequence`
+    # column in `columns`.
+    document_id_column: str | None = None
 
     @field_validator("schema_name", "table", "key_column")
     @classmethod
     def _valid_identifier(cls, v: str) -> str:
         return _validate_identifier(v, what="PostgreSQL identifier")
+
+    @field_validator("document_id_column")
+    @classmethod
+    def _valid_optional_identifier(cls, v: str | None) -> str | None:
+        return _validate_identifier(v, what="PostgreSQL identifier") if v else v
 
     @field_validator("columns")
     @classmethod
@@ -155,6 +164,25 @@ class PostgresCollectionMapping(BaseModel):
         return v
 
 
+class SourceUriTemplate(BaseModel):
+    """Builds a client-openable document URI from a stored path field.
+
+    Reconstructs, per result, a path the user's machine can open (e.g. a UNC
+    path to the Synology share, or a ``file://`` URL) from the indexed path,
+    which is otherwise a container/host path that is not directly openable. The
+    values here are trusted configuration, not client input.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    from_payload: str  # payload key holding the raw stored path
+    strip_prefix: str = ""  # remove this leading path prefix (e.g. "/data/")
+    add_prefix: str = ""  # prepend this (e.g. "\\\\192.168.1.59\\share\\")
+    separator: str | None = None  # replace "/" in the path with this (e.g. "\\")
+    # For PDFs, append "#page=N" so viewers that support it open at the page.
+    pdf_page_anchor: bool = False
+
+
 class CollectionMapping(BaseModel):
     """Everything the engine needs to interpret one Qdrant collection."""
 
@@ -166,6 +194,22 @@ class CollectionMapping(BaseModel):
     payload: PayloadMapping = Field(default_factory=PayloadMapping)
     filters: dict[str, str] = Field(default_factory=dict)
     postgres: PostgresCollectionMapping | None = None
+    source_uri: SourceUriTemplate | None = None
+    # Where neighbouring chunks come from: "qdrant" (adjacent by a sequence
+    # payload key) or "postgres" (adjacent by a sequence column, for indexes
+    # whose chunk order lives only in PostgreSQL).
+    neighbour_source: Literal["qdrant", "postgres"] = "qdrant"
+
+    @model_validator(mode="after")
+    def _check_neighbour_source(self) -> CollectionMapping:
+        if self.neighbour_source == "postgres":
+            pg = self.postgres
+            if pg is None or pg.document_id_column is None or "sequence" not in pg.columns:
+                raise ValueError(
+                    "neighbour_source='postgres' requires a postgres mapping with "
+                    "document_id_column set and a 'sequence' column mapped"
+                )
+        return self
 
     @model_validator(mode="after")
     def _check_consistency(self) -> CollectionMapping:
@@ -280,10 +324,15 @@ class Settings(BaseSettings):
     # Candidate oversampling for dense search (headroom for dedup/threshold).
     candidate_multiplier: int = 4
     max_candidates: int = 100
+    # Collapse near-duplicate versions of the same document (e.g. "deck v2..v6")
+    # across results, keeping the most recent (by modified date, else best score).
+    collapse_duplicate_versions: bool = False
+    duplicate_version_similarity: float = 0.9
 
     # Reliability
     search_timeout_seconds: float = 10.0
     max_retries: int = 2
+    retry_base_delay_seconds: float = 0.2
     # When multiple collections are searched and one is unavailable: if true,
     # return partial results with a warning; if false (default), fail the search.
     partial_results_on_collection_error: bool = False
